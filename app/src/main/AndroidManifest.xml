@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest package="com.shazwar.wifidirector"
+          xmlns:android="http://schemas.android.com/apk/res/android"
+          android:versionCode="1"
+          android:versionName="2017-02-01-00">
+
+
+    <uses-sdk android:minSdkVersion="19"/>
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+
+    <application>
+        <receiver android:name=".WifiStateReceiver">
+            <intent-filter>
+                <action android:name="android.net.wifi.WIFI_STATE_CHANGED"/>
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".WifiDirectManager"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.net.wifi.p2p.CONNECTION_STATE_CHANGE"></action>
+                <action android:name="android.net.wifi.p2p.DISCOVERY_STATE_CHANGE"></action>
+                <action android:name="android.net.wifi.p2p.PEERS_CHANGED"></action>
+                <action android:name="android.net.wifi.p2p.STATE_CHANGED"></action>
+                <action android:name="android.net.wifi.WIFI_STATE_CHANGED"></action>
+                <action android:name="com.shazwar.wifidirector.action.initialize"></action>
+                <action android:name="com.shazwar.wifidirector.action.findpeers"></action>
+                <action android:name="com.shazwar.wifidirector.action.registerendpoint"></action>
+                <action android:name="com.shazwar.wifidirector.action.host"></action>
+                <action android:name="com.shazwar.wifidirector.action.connect"></action>
+                <action android:name="com.shazwar.wifidirector.action.advertiseservice"></action>
+                <action android:name="com.shazwar.wifidirector.action.stopservice"></action>
+                <action android:name="com.shazwar.wifidirector.action.findservice"></action>
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>
