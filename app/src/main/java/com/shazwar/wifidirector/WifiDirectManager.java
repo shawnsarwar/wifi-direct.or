@@ -1,26 +1,27 @@
 package com.shazwar.wifidirector;
 
 import android.app.IntentService;
-import android.app.Service;
 import android.content.Intent;
 import android.content.Context;
-import android.content.IntentFilter;
 import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
+import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest;
-import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
 
+import java.net.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import be.shouldit.proxy.lib.APL;
 
 import static java.util.Arrays.asList;
 
@@ -41,6 +42,7 @@ public class WifiDirectManager extends NonStopIntentService {
     public static final String ACTION_FIND_PEERS = "com.shazwar.wifidirector.action.findpeers";
     public static final String ACTION_REGISTER_ENDPOINT= "com.shazwar.wifidirector.action.registerendpoint";
     public static final String ACTION_HOST= "com.shazwar.wifidirector.action.host";
+    public static final String ACTION_STOP_HOST = "com.shazwar.wifidirector.action.stophost";
     public static final String ACTION_CONNECT= "com.shazwar.wifidirector.action.connect";
     public static final String ACTION_ADVERTISE_SERVICE= "com.shazwar.wifidirector.action.advertiseservice";
     public static final String ACTION_STOP_ADVERTISE_SERVICE= "com.shazwar.wifidirector.action.stopadvertise";
@@ -79,6 +81,10 @@ public class WifiDirectManager extends NonStopIntentService {
     //private Map<String, ServiceBroadcastThread> mServiceBroadCastThreads;
     private Map<String, HashMap<String,WifiP2pDevice>> availableServices; //service -> deviceid -> info
     private Map<String, WifiP2pDnsSdServiceInfo> activeBroadcasts; //services that this device is broadcasting.
+
+    //TODO kill!
+    private SimpleProxy mProxy;
+
 
     //status flags
     public static boolean LAUNCHED = false;
@@ -133,13 +139,14 @@ public class WifiDirectManager extends NonStopIntentService {
             }else if(ACTION_FIND_SERVICE.equals(action)){
                 final String serviceName = intent.getStringExtra(EX_APP_NAME);
                 handleFindService(serviceName);
-
             }else if(ACTION_REGISTER_ENDPOINT.equals(action)){
                 final String app_name = intent.getStringExtra(EX_APP_NAME);
                 final String port = intent.getStringExtra(EX_PORT);
                 //TODO What do we mean by this?
-            }else if(ACTION_HOST.equals(action)){
-
+            }else if(ACTION_HOST.equals(action)) {
+                handleHost(intent.getStringExtra(EX_APP_NAME));
+            }else if (ACTION_STOP_HOST.equals(action)){
+                handleStopHost();
             }else if(ACTION_CONNECT.equals(action)){
 
             }else if(SYSTEM_INTENTS.contains(action)){
@@ -313,15 +320,71 @@ public class WifiDirectManager extends NonStopIntentService {
 
     }
 
-    private void handleHost(){
+    private void handleStopHost(){
+        mWifiP2pManager.removeGroup(mP2PChannel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                Log.d(TAG, "Removed group! No longer hosting.");
+
+            }
+
+            @Override
+            public void onFailure(int errorCode) {
+                Log.e(TAG, String.format("failed to stop hosting on channel, error: %s", P2P_ERRORS.get(errorCode)));
+            }
+        });
 
     }
 
-    private void broadcastResult(String action, Bundle extras){
-        Intent i = new Intent();
-        i.putExtras(extras);
-        i.setAction(action);
-        sendBroadcast(i);
+    private void handleHost(final String serviceName){
+        mWifiP2pManager.createGroup(mP2PChannel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                // Device is ready to accept incoming connections from peers.
+                mWifiP2pManager.requestGroupInfo(mP2PChannel, new WifiP2pManager.GroupInfoListener(){
+                    @Override
+                    public void onGroupInfoAvailable(WifiP2pGroup group){
+                        try {
+                            final ArrayList<String> info = new ArrayList<String>();
+                            info.add(group.getInterface());
+                            info.add(group.getNetworkName());
+                            info.add(group.getPassphrase());
+
+                            Log.d(TAG, String.format("hosting group for %s! : info %s", serviceName,
+                                    Arrays.toString(info.toArray())));
+
+                        }catch (NullPointerException ex){
+                            ex.printStackTrace();
+                        }finally{
+                            Thread thread = new Thread() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        /*
+                                        mProxy = new SimpleProxy(7700, "simple-proxy");
+                                        mProxy.runServer();
+                                        */
+                                        APL.setup(getApplicationContext());
+                                        Proxy proxy = APL.getCurrentHttpProxyConfiguration( );
+                                        Log.d(TAG, "existing proxy is @ " + proxy.address());
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                    }
+                                }
+                            };
+                            thread.start();
+                        }
+
+
+                    }
+                });
+            }
+
+            @Override
+            public void onFailure(int errorCode) {
+                Log.e(TAG, String.format("failed initialize host for service: %s, error: %s", serviceName, P2P_ERRORS.get(errorCode)));
+            }
+        });
     }
 
     private void handleSysP2PStateChanged(Intent intent){
