@@ -3,16 +3,19 @@ package com.shazwar.wifidirector;
 import android.app.IntentService;
 import android.content.Intent;
 import android.content.Context;
+import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pGroup;
+import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest;
 import android.os.Handler;
 import android.util.Log;
 
+import java.lang.reflect.Method;
 import java.net.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -83,7 +86,8 @@ public class WifiDirectManager extends NonStopIntentService {
     private Map<String, WifiP2pDnsSdServiceInfo> activeBroadcasts; //services that this device is broadcasting.
 
     //TODO kill!
-    private SimpleProxy mProxy;
+    //private SimpleProxy mProxy;
+    private ProxyServer mProxy;
 
 
     //status flags
@@ -325,6 +329,14 @@ public class WifiDirectManager extends NonStopIntentService {
             @Override
             public void onSuccess() {
                 Log.d(TAG, "Removed group! No longer hosting.");
+                if (mProxy != null ){
+                    try {
+                        mProxy.stopServer();
+                    }catch (NullPointerException ex){
+                        Log.d(TAG, "tried to stop proxy service that wasn't running...");
+                    }
+                }
+
 
             }
 
@@ -336,11 +348,24 @@ public class WifiDirectManager extends NonStopIntentService {
 
     }
 
+
     private void handleHost(final String serviceName){
         mWifiP2pManager.createGroup(mP2PChannel, new WifiP2pManager.ActionListener() {
             @Override
             public void onSuccess() {
                 // Device is ready to accept incoming connections from peers.
+                try {
+                    Log.d(TAG, "sleeping for a second before requesting group information");
+                    Thread.sleep(1500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                mWifiP2pManager.requestConnectionInfo(mP2PChannel, new WifiP2pManager.ConnectionInfoListener() {
+                    @Override
+                    public void onConnectionInfoAvailable(WifiP2pInfo info) {
+                        Log.d(TAG, String.format("Got connection information! | hosting @ %s", info.groupOwnerAddress.getHostAddress()));
+                    }
+                });
                 mWifiP2pManager.requestGroupInfo(mP2PChannel, new WifiP2pManager.GroupInfoListener(){
                     @Override
                     public void onGroupInfoAvailable(WifiP2pGroup group){
@@ -360,13 +385,13 @@ public class WifiDirectManager extends NonStopIntentService {
                                 @Override
                                 public void run() {
                                     try {
+                                        mProxy = new ProxyServer(7700);
+                                        mProxy.startServer();
                                         /*
                                         mProxy = new SimpleProxy(7700, "simple-proxy");
                                         mProxy.runServer();
                                         */
-                                        APL.setup(getApplicationContext());
-                                        Proxy proxy = APL.getCurrentHttpProxyConfiguration( );
-                                        Log.d(TAG, "existing proxy is @ " + proxy.address());
+
                                     } catch (Exception e) {
                                         e.printStackTrace();
                                     }

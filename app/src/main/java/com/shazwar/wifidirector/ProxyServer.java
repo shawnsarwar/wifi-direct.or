@@ -45,9 +45,6 @@ package com.shazwar.wifidirector;
         import java.util.concurrent.Executors;
         import java.util.concurrent.TimeUnit;
 
-/**
- * @hide
- */
 public class ProxyServer extends Thread {
     private static final String CONNECT = "CONNECT";
     private static final String HTTP_OK = "HTTP/1.1 200 OK\n";
@@ -56,7 +53,6 @@ public class ProxyServer extends Thread {
     public boolean mIsRunning = false;
     private ServerSocket serverSocket;
     private int mPort;
-    Socket server = null;
     //private IProxyPortListener mCallback;
     private class ProxyConnection implements Runnable {
         private Socket connection;
@@ -108,8 +104,7 @@ public class ProxyServer extends Thread {
                 } catch (URISyntaxException e) {
                     e.printStackTrace();
                 }
-                //Socket server = null;
-                server = null;
+                Socket server = null;
                 for (Proxy proxy : list) {
                     try {
                         if (!proxy.equals(Proxy.NO_PROXY)) {
@@ -122,6 +117,7 @@ public class ProxyServer extends Thread {
                         } else {
                             server = new Socket(host, port);
                             if (requestType.equals(CONNECT)) {
+                                Log.d(TAG, "got connection request");
                                 while (getLine(connection.getInputStream()).length() != 0);
                                 // No proxy to respond so we must.
                                 sendLine(connection, HTTP_OK);
@@ -146,35 +142,7 @@ public class ProxyServer extends Thread {
                     }
                 }
                 // Pass data back and forth until complete.
-                //SocketConnect.connect(connection, server);
-                ExecutorService taskExecutor = Executors.newFixedThreadPool(2);
-                Thread input = new Thread() {
-                    @Override
-                    public void run() {
-                        try {
-                            ByteStreams.copy(server.getInputStream(), connection.getOutputStream());
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                    }
-                };
-                Thread output = new Thread() {
-                    @Override
-                    public void run() {
-                        try {
-                            ByteStreams.copy(connection.getInputStream(), server.getOutputStream());
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                    }
-                };
-                taskExecutor.execute(input);
-                taskExecutor.execute(output);
-                try {
-                    taskExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
-                }catch (InterruptedException ex){
-                    Log.e(TAG, "interrupted!");
-                }
+                SocketConnect.connect(connection, server);
             } catch (IOException e) {
                 Log.d(TAG, "Problem Proxying", e);
             }
@@ -202,5 +170,61 @@ public class ProxyServer extends Thread {
             os.write('\n');
             os.flush();
         }
+    }
+    public ProxyServer(int port) {
+        threadExecutor = Executors.newCachedThreadPool();
+        mPort = port;
+
+        //mCallback = null;
+    }
+    @Override
+    public void run() {
+        try {
+            serverSocket = new ServerSocket(mPort);
+            if (serverSocket != null) {
+                //setPort(serverSocket.getLocalPort());
+
+                while (mIsRunning) {
+                    try {
+                        Log.d(TAG, String.format("Opening socket on port %s and waiting", serverSocket.getLocalPort()));
+                        Socket socket = serverSocket.accept();
+                        Log.d(TAG, String.format("Accepted Connection on port %s", serverSocket.getLocalPort()));
+                        ProxyConnection parser = new ProxyConnection(socket);
+                        threadExecutor.execute(parser);
+
+
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            Log.e(TAG, "Failed to start proxy server", e);
+        } catch (IOException e1) {
+            Log.e(TAG, "Failed to start proxy server", e1);
+        }
+        mIsRunning = false;
+    }
+
+    public synchronized void startServer() {
+        mIsRunning = true;
+        start();
+    }
+    public synchronized void stopServer() {
+        mIsRunning = false;
+        if (serverSocket != null) {
+            try {
+                serverSocket.close();
+                serverSocket = null;
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    public boolean isBound() {
+        return (mPort != -1);
+    }
+    public int getPort() {
+        return mPort;
     }
 }
