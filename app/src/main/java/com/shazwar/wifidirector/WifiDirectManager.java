@@ -15,6 +15,8 @@ import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest;
 import android.os.Handler;
 import android.util.Log;
 
+import org.json.JSONObject;
+
 import java.lang.reflect.Method;
 import java.net.Proxy;
 import java.util.ArrayList;
@@ -71,6 +73,9 @@ public class WifiDirectManager extends NonStopIntentService {
             WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION  //3
     ));
 
+    //Broadcasts we send
+    public static final String BROADCAST_AVAILABLE_SERVICES = "com.shazwar.wifidirector.broadcast.availableservices";
+
     //long lived system instances
     private WifiP2pManager mWifiP2pManager;
     private WifiP2pManager.Channel mP2PChannel;
@@ -82,7 +87,7 @@ public class WifiDirectManager extends NonStopIntentService {
     private Handler mServiceReceiverHandler;
     private Map<String, Handler> mServiceBroadcastHandlers;
     //private Map<String, ServiceBroadcastThread> mServiceBroadCastThreads;
-    private Map<String, HashMap<String,WifiP2pDevice>> availableServices; //service -> deviceid -> info
+    private Map<String, HashMap<String,HashMap<String, String>>> availableServices; //service -> deviceid -> info
     private Map<String, WifiP2pDnsSdServiceInfo> activeBroadcasts; //services that this device is broadcasting.
 
     //TODO kill!
@@ -187,7 +192,7 @@ public class WifiDirectManager extends NonStopIntentService {
             Context mContext = getApplicationContext();
 
             mWifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
-            availableServices = new HashMap<String, HashMap<String, WifiP2pDevice>>();
+            availableServices = new HashMap<String, HashMap<String, HashMap<String,String>>>();
             mWifiP2pManager = (WifiP2pManager) mContext.getSystemService(Context.WIFI_P2P_SERVICE);
             mP2PChannel = mWifiP2pManager.initialize(this, getMainLooper(), null);
             mPeers = new WifiP2pDeviceList();
@@ -324,18 +329,14 @@ public class WifiDirectManager extends NonStopIntentService {
 
     }
 
+    private void handleConnectWithProxy(){}
+
     private void handleStopHost(){
         mWifiP2pManager.removeGroup(mP2PChannel, new WifiP2pManager.ActionListener() {
             @Override
             public void onSuccess() {
                 Log.d(TAG, "Removed group! No longer hosting.");
-                if (mProxy != null ){
-                    try {
-                        mProxy.stopServer();
-                    }catch (NullPointerException ex){
-                        Log.d(TAG, "tried to stop proxy service that wasn't running...");
-                    }
-                }
+                killProxy();
 
 
             }
@@ -348,6 +349,33 @@ public class WifiDirectManager extends NonStopIntentService {
 
     }
 
+    private void startProxyAndAdvertise(final String ip, final String network, final String password){
+        final int proxyPort = 7700;
+        mProxy = new ProxyServer(7700);
+        mProxy.startServer();
+        HashMap info = new HashMap<String , String>(){
+            {
+                put("ip", ip);
+                put("ssid", network);
+                put("pw", password);
+                put("port", Integer.toString(proxyPort));
+            }
+        };
+        handleAdvertiseService("internal-proxy","proxy", info);
+    }
+
+    private void killProxy(){
+        if (mProxy != null ){
+            try {
+                mProxy.stopServer();
+            }catch (NullPointerException ex){
+                Log.d(TAG, "tried to stop proxy service that wasn't running...");
+            }finally {
+                handleStopAdvertiseService("internal-proxy");
+            }
+        }
+
+    }
 
     private void handleHost(final String serviceName){
         mWifiP2pManager.createGroup(mP2PChannel, new WifiP2pManager.ActionListener() {
@@ -360,9 +388,12 @@ public class WifiDirectManager extends NonStopIntentService {
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
+                final HashMap<String, String> hostInfo = new HashMap();
+
                 mWifiP2pManager.requestConnectionInfo(mP2PChannel, new WifiP2pManager.ConnectionInfoListener() {
                     @Override
                     public void onConnectionInfoAvailable(WifiP2pInfo info) {
+                        hostInfo.put("ip", info.groupOwnerAddress.getHostAddress());
                         Log.d(TAG, String.format("Got connection information! | hosting @ %s", info.groupOwnerAddress.getHostAddress()));
                     }
                 });
@@ -371,26 +402,25 @@ public class WifiDirectManager extends NonStopIntentService {
                     public void onGroupInfoAvailable(WifiP2pGroup group){
                         try {
                             final ArrayList<String> info = new ArrayList<String>();
-                            info.add(group.getInterface());
-                            info.add(group.getNetworkName());
-                            info.add(group.getPassphrase());
+                            hostInfo.put("iface", group.getInterface());
+                            hostInfo.put("ssid", group.getNetworkName());
+                            hostInfo.put("pw", group.getPassphrase());
 
                             Log.d(TAG, String.format("hosting group for %s! : info %s", serviceName,
-                                    Arrays.toString(info.toArray())));
+                                    Arrays.toString(hostInfo.values().toArray())));
 
                         }catch (NullPointerException ex){
                             ex.printStackTrace();
                         }finally{
+                            startProxyAndAdvertise(hostInfo.get("ip"),hostInfo.get("ssid"),hostInfo.get("pw"));
+                            /*
                             Thread thread = new Thread() {
                                 @Override
                                 public void run() {
                                     try {
                                         mProxy = new ProxyServer(7700);
                                         mProxy.startServer();
-                                        /*
-                                        mProxy = new SimpleProxy(7700, "simple-proxy");
-                                        mProxy.runServer();
-                                        */
+
 
                                     } catch (Exception e) {
                                         e.printStackTrace();
@@ -398,6 +428,8 @@ public class WifiDirectManager extends NonStopIntentService {
                                 }
                             };
                             thread.start();
+                            */
+
                         }
 
 
@@ -446,18 +478,13 @@ public class WifiDirectManager extends NonStopIntentService {
     }
 
     // creates an instance of peer listener. We need to figure out what we want to do to handle these.
+    // infact we don't use this at all since we don't use this connection method
     private WifiP2pManager.PeerListListener getPeerListener(){
         return new WifiP2pManager.PeerListListener() {
             @Override
             public void onPeersAvailable(WifiP2pDeviceList peers) {
                 mPeers = peers;
-
                 Log.d(TAG, String.format("new peers list found. count: %s", peers.getDeviceList().size()));
-                /*
-                for(WifiP2pDevice device: mPeers.getDeviceList()){
-
-                }
-                */
             }
         };
 
@@ -470,15 +497,7 @@ public class WifiDirectManager extends NonStopIntentService {
                 @Override
                 public void onDnsSdServiceAvailable(String serviceName, String protocol, WifiP2pDevice deviceInfo) {
                     HashMap<String, WifiP2pDevice> availableDevices;
-                    if (!availableServices.containsKey(serviceName)) {
-                        Log.d(TAG, String.format("found new service broadcast of type %s", serviceName));
-                        availableDevices = new HashMap<String, WifiP2pDevice>();
-                    } else {
-                        availableDevices = availableServices.get(serviceName);
-                    }
                     Log.d(TAG, String.format("device %s found broadcasting service %s @ protocol %s", deviceInfo.deviceAddress, serviceName, protocol));
-                    availableDevices.put(deviceInfo.deviceAddress, deviceInfo);
-                    availableServices.put(serviceName, availableDevices);
                 }
             };
         }
@@ -486,6 +505,7 @@ public class WifiDirectManager extends NonStopIntentService {
 
     }
 
+    //callback for service discovery
     private WifiP2pManager.DnsSdTxtRecordListener getTxtRecordListener() {
         if(mTxTRecordListener == null) {
             mTxTRecordListener = new WifiP2pManager.DnsSdTxtRecordListener() {
@@ -493,11 +513,34 @@ public class WifiDirectManager extends NonStopIntentService {
                 public void onDnsSdTxtRecordAvailable(String domainName, Map<String, String> txtRecordMap, WifiP2pDevice srcDevice) {
                     Log.d(TAG, String.format("hit to TXTRecord Available for domain: %s", domainName));
                     Log.d(TAG, String.format("device info | canDiscover: %s, address: %s | info: %s", srcDevice.isServiceDiscoveryCapable(), srcDevice.deviceAddress, Arrays.toString(txtRecordMap.entrySet().toArray())));
+                    HashMap<String, HashMap<String, String>> availableDevices;
+                    if (!availableServices.containsKey(domainName)) {
+                        availableDevices = new HashMap<String, HashMap<String, String>>();
+                    }else{
+                        availableDevices = availableServices.get(domainName);
+                    }
+                    availableDevices.put(srcDevice.deviceAddress,(HashMap) txtRecordMap);
+                    availableServices.put(domainName, availableDevices);
+                    broadcastAvailableServices();
                 }
             };
         }
         return mTxTRecordListener;
 
+    }
+
+    private void broadcastAvailableServices(){
+        if (availableServices != null) {
+            for (String key: availableServices.keySet()){
+                Log.d(key, Arrays.toString(availableServices.get(key).values().toArray()));
+            }
+            String broadcastData = new JSONObject(availableServices).toString();
+            Intent i = new Intent();
+            i.setAction(BROADCAST_AVAILABLE_SERVICES);
+            i.putExtra("data", broadcastData);
+            Log.d(TAG, "broadcasting services: " + broadcastData);
+            sendBroadcast(i);
+        }
     }
 
     /*
